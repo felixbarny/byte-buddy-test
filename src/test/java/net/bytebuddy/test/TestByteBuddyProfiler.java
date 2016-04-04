@@ -1,16 +1,12 @@
 package net.bytebuddy.test;
 
+import static java.lang.System.nanoTime;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
-import java.util.concurrent.Callable;
-
 import net.bytebuddy.agent.ByteBuddyAgent;
 import net.bytebuddy.agent.builder.AgentBuilder;
-import net.bytebuddy.implementation.MethodDelegation;
-import net.bytebuddy.implementation.bind.annotation.Origin;
-import net.bytebuddy.implementation.bind.annotation.RuntimeType;
-import net.bytebuddy.implementation.bind.annotation.SuperCall;
+import net.bytebuddy.asm.Advice;
 import net.bytebuddy.matcher.ElementMatchers;
 import org.junit.Before;
 import org.junit.Test;
@@ -18,7 +14,7 @@ import org.junit.Test;
 public class TestByteBuddyProfiler {
 
 	private static String signature;
-	private static int argument;
+	private static int returnValue;
 	private static long executionTime;
 
 	@Before
@@ -39,51 +35,40 @@ public class TestByteBuddyProfiler {
 				.with(AgentBuilder.TypeStrategy.Default.REDEFINE)
 				.type(ElementMatchers.named(ProfiledClass.class.getName()))
 				.transform((builder, typeDescription, classLoader) -> builder
-						.method(ElementMatchers.any())
-						.intercept(MethodDelegation.to(ProfilingInterceptor.class)))
+						.visit(Advice.to(ProfilingAdvice.class).on(ElementMatchers.any())))
 				.installOnByteBuddyAgent();
 
 		new ProfiledClass().profiledMethod(1);
 
 		assertEquals("net.bytebuddy.test.TestByteBuddyProfiler$ProfiledClass.profiledMethod", signature);
-		assertEquals(1, argument);
+		assertEquals(1, returnValue);
 		assertTrue(executionTime > 0);
+	}
+
+	public static void someMethod() {
+		System.out.println("called some method");
 	}
 
 	public static class ProfiledClass{
 		public static void makeSureClassIsLoaded() {
 		}
 
-		public void profiledMethod(int i) {
+		public int profiledMethod(int i) {
+			return i;
 		}
 	}
 
-	public static class ProfilingInterceptor {
-
-		@RuntimeType
-		public static Object profile(@Origin String signature, @SuperCall Callable<?> zuper) throws Exception {
-			// TODO argument
-			// TestByteBuddyProfiler.argument = arg;
-			long start = System.nanoTime();
-			// TODO customize signature (see assert)
+	private static class ProfilingAdvice {
+		@Advice.OnMethodEnter
+		public static long enter(@Advice.Origin("#t.#m") String signature) {
 			TestByteBuddyProfiler.signature = signature;
-			try {
-				return zuper.call();
-			} finally {
-				TestByteBuddyProfiler.executionTime = System.nanoTime() - start;
-			}
+			return nanoTime();
 		}
-		/*
-		@RuntimeType
-		public static Object profile(@Origin(cacheMethod = true) Method method, @Origin Class clazz, @SuperCall Callable<?> zuper) throws Exception {
-			String signature = clazz.toString() + method.toString();
-			long start = System.nanoTime();
-			TestByteBuddyProfiler.signature = signature;
-			try {
-				return zuper.call();
-			} finally {
-				executionTime = System.nanoTime() - start;
-			}
-		}*/
+
+		@Advice.OnMethodExit
+		public static void exit(@Advice.Return long value) {
+			// TODO how do I capture the return value when value is the added local variable?
+			executionTime = System.nanoTime() - value;
+		}
 	}
 }
